@@ -28,10 +28,12 @@ data class FormState(
     val showAllCategories: Boolean = false,
     /** For edits: keep the original time of day when the date changes. */
     val keepTime: LocalTime? = null,
+    /** null = use the category's need/want default. */
+    val wantOverride: Boolean? = null,
 ) {
     val ready: Boolean get() = amount.paise > 0 && categoryId != null
 
-    fun toExpense(id: Long = 0, wantOverride: Boolean? = null, now: ZonedDateTime = ZonedDateTime.now()): Expense {
+    fun toExpense(id: Long = 0, now: ZonedDateTime = ZonedDateTime.now()): Expense {
         val timestamp = if (keepTime == null && date == now.toLocalDate()) {
             now.toInstant().toEpochMilli()
         } else {
@@ -56,6 +58,7 @@ data class FormState(
             payment = e.payment,
             note = e.note,
             keepTime = e.localTime(),
+            wantOverride = e.wantOverride,
         )
     }
 }
@@ -71,7 +74,8 @@ class FormController(initial: FormState) {
     fun pick(id: String) = _state.update { it.copy(categoryId = id, showAllCategories = false) }
     fun toggleAll() = _state.update { it.copy(showAllCategories = !it.showAllCategories) }
     fun setDate(d: LocalDate) = _state.update { it.copy(date = d) }
-    fun cyclePayment() = _state.update { it.copy(payment = it.payment.next()) }
+    fun setPayment(p: PaymentMethod) = _state.update { it.copy(payment = p) }
+    fun setWant(want: Boolean) = _state.update { it.copy(wantOverride = want) }
     fun note(s: String) = _state.update { it.copy(note = s.take(80)) }
     fun reset(s: FormState) { _state.value = s }
 }
@@ -84,6 +88,7 @@ data class FormUi(
     val all: List<Category>,
     val line: BudgetLine,
     val submitLabel: String,
+    val isWant: Boolean = false,
 ) {
     val dateLabel: String get() = when (state.date) {
         today -> "Today"
@@ -119,6 +124,7 @@ fun buildFormUi(
         all = categories,
         line = line,
         submitLabel = label,
+        isWant = state.wantOverride ?: cat?.isWant ?: false,
     )
 }
 
@@ -127,7 +133,8 @@ interface FormActions {
     fun pick(id: String)
     fun toggleAll()
     fun setDate(d: LocalDate)
-    fun cyclePayment()
+    fun setPayment(p: PaymentMethod)
+    fun setWant(want: Boolean)
     fun note(s: String)
     fun submit()
 }
@@ -137,7 +144,8 @@ fun FormController.actions(onSubmit: () -> Unit): FormActions = object : FormAct
     override fun pick(id: String) = this@actions.pick(id)
     override fun toggleAll() = this@actions.toggleAll()
     override fun setDate(d: LocalDate) = this@actions.setDate(d)
-    override fun cyclePayment() = this@actions.cyclePayment()
+    override fun setPayment(p: PaymentMethod) = this@actions.setPayment(p)
+    override fun setWant(want: Boolean) = this@actions.setWant(want)
     override fun note(s: String) = this@actions.note(s)
     override fun submit() = onSubmit()
 }

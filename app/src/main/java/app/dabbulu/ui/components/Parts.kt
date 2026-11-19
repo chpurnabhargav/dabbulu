@@ -41,17 +41,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.TransformOrigin
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
@@ -62,9 +58,7 @@ import app.dabbulu.domain.Category
 import app.dabbulu.domain.Expense
 import app.dabbulu.domain.Money
 import app.dabbulu.domain.PadKey
-import app.dabbulu.ui.art.Art
-import app.dabbulu.ui.art.ArtIcon
-import app.dabbulu.ui.art.CategoryArt
+import app.dabbulu.ui.art.CategoryGlyphs
 import app.dabbulu.ui.art.Glyph
 import app.dabbulu.ui.art.LineIcon
 import app.dabbulu.ui.theme.Palette
@@ -73,62 +67,58 @@ import kotlinx.coroutines.launch
 
 fun Category.uiColor() = Color(color)
 
-/** A category button with its 3D icon. When selected it glows in the category colour and the icon pops up. */
+/** A category's outline icon on a softly tinted, slightly raised tile. */
+@Composable
+fun CategoryIcon(categoryId: String, color: Color, size: Dp = 42.dp, modifier: Modifier = Modifier) {
+    val shape = RoundedCornerShape(size * 0.3f)
+    Box(
+        modifier
+            .size(size)
+            .clip(shape)
+            .background(Brush.verticalGradient(listOf(color.copy(alpha = 0.20f), color.copy(alpha = 0.10f))))
+            .border(1.dp, color.copy(alpha = 0.22f), shape),
+        contentAlignment = Alignment.Center,
+    ) {
+        LineIcon(CategoryGlyphs.of(categoryId), lerp(color, Color.White, 0.15f), size = size * 0.48f, strokeWidth = 2f)
+    }
+}
+
+/** A category choice in the Quick Add grid. */
 @Composable
 fun CategoryTile(
     label: String,
-    art: Art,
+    glyph: Glyph,
     color: Color,
     selected: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    dashed: Boolean = false,
 ) {
-    val lift by animateFloatAsState(
-        if (selected) 1f else 0f,
-        spring(dampingRatio = 0.45f, stiffness = 520f),
-        label = "lift",
-    )
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
-    val press by animateFloatAsState(if (pressed) 0.94f else 1f, label = "tilePress")
-    val shape = RoundedCornerShape(18.dp)
-    val bg = if (selected) {
-        Brush.verticalGradient(listOf(color.copy(alpha = 0.28f), color.copy(alpha = 0.08f)))
-    } else {
-        Brush.verticalGradient(listOf(Palette.CardHi, Palette.CardLo))
-    }
+    val press by animateFloatAsState(if (pressed) 0.95f else 1f, label = "tilePress")
+    val pick by animateFloatAsState(if (selected) 1f else 0f, spring(dampingRatio = 0.6f, stiffness = 600f), label = "tilePick")
+    val shape = RoundedCornerShape(16.dp)
     Column(
         modifier
-            .height(70.dp)
+            .height(66.dp)
             .graphicsLayer { scaleX = press; scaleY = press }
-            .then(if (selected) Modifier.shadow(14.dp, shape, ambientColor = color, spotColor = color) else Modifier)
             .clip(shape)
-            .background(bg)
-            .then(
-                if (dashed) {
-                    Modifier.drawBehind {
-                        drawRoundRect(
-                            color = Palette.BorderHi,
-                            cornerRadius = CornerRadius(18.dp.toPx()),
-                            style = Stroke(width = 1.5.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 7f))),
-                        )
-                    }
-                } else {
-                    Modifier.border(1.5.dp, if (selected) color else Palette.Border, shape)
-                },
-            )
+            .background(if (selected) color.copy(alpha = 0.14f) else Palette.Field)
+            .border(if (selected) 1.5.dp else 1.dp, if (selected) color.copy(alpha = 0.85f) else Palette.Border, shape)
             .clickable(interactionSource = interaction, indication = null, role = Role.Button, onClick = onClick)
             .semantics { this.selected = selected },
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        ArtIcon(art, 38.dp, lift = { lift })
-        Spacer(Modifier.height(3.dp))
+        LineIcon(
+            glyph, lerp(Palette.TextSoft, lerp(color, Color.White, 0.1f), 0.55f + 0.45f * pick), size = 22.dp, strokeWidth = 2f,
+            modifier = Modifier.graphicsLayer { translationY = -2.dp.toPx() * pick },
+        )
+        Spacer(Modifier.height(5.dp))
         Text(
             label,
             style = Type.Tiny,
-            color = if (selected) Palette.Text else Palette.TextSoft,
+            color = if (selected) Palette.Text else Palette.TextDim,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
@@ -151,7 +141,7 @@ fun <T> Grid(items: List<T>, columns: Int, gap: Dp, rowGap: Dp = gap, cell: @Com
 private val padKeys: List<PadKey> = "123456789".map { PadKey.Digit(it) } + listOf(PadKey.Dot, PadKey.Digit('0'), PadKey.Back)
 
 @Composable
-fun Keypad(onKey: (PadKey) -> Unit, modifier: Modifier = Modifier) {
+fun Keypad(onKey: (PadKey) -> Unit, modifier: Modifier = Modifier, allowDot: Boolean = true) {
     Box(modifier) {
         Grid(padKeys, columns = 3, gap = 8.dp, rowGap = 6.dp) { key, m ->
             val label = when (key) {
@@ -159,20 +149,24 @@ fun Keypad(onKey: (PadKey) -> Unit, modifier: Modifier = Modifier) {
                 PadKey.Dot -> "Decimal point"
                 is PadKey.Digit -> key.d.toString()
             }
-            Press3D(onClick = { onKey(key) }, modifier = m, description = label) {
-                when (key) {
-                    PadKey.Back -> LineIcon(Glyph.Backspace, Palette.Text, size = 22.dp)
-                    PadKey.Dot -> Text(".", style = Type.Key, color = Palette.Text)
-                    is PadKey.Digit -> Text(key.d.toString(), style = Type.Key, color = Palette.Text)
+            if (key == PadKey.Dot && !allowDot) {
+                Spacer(m)
+            } else {
+                Press3D(onClick = { onKey(key) }, modifier = m, description = label) {
+                    when (key) {
+                        PadKey.Back -> LineIcon(Glyph.Backspace, Palette.TextSoft, size = 22.dp)
+                        PadKey.Dot -> Text("·", style = Type.Key, color = Palette.Text)
+                        is PadKey.Digit -> Text(key.d.toString(), style = Type.Key, color = Palette.Text)
+                    }
                 }
             }
         }
     }
 }
 
-/** A thick rounded progress bar with a glossy fill. */
+/** Rounded progress bar. */
 @Composable
-fun Meter(fraction: Float, color: Color, modifier: Modifier = Modifier, height: Dp = 10.dp) {
+fun Meter(fraction: Float, color: Color, modifier: Modifier = Modifier, height: Dp = 8.dp) {
     val f by animateFloatAsState(fraction.coerceIn(0f, 1f), spring(stiffness = Spring.StiffnessLow), label = "meter")
     val shape = RoundedCornerShape(height / 2)
     Box(
@@ -188,7 +182,7 @@ fun Meter(fraction: Float, color: Color, modifier: Modifier = Modifier, height: 
                     .fillMaxHeight()
                     .fillMaxWidth(f)
                     .clip(shape)
-                    .background(Brush.verticalGradient(listOf(androidx.compose.ui.graphics.lerp(color, Color.White, 0.3f), color))),
+                    .background(Brush.verticalGradient(listOf(lerp(color, Color.White, 0.22f), color))),
             )
         }
     }
@@ -203,7 +197,7 @@ fun SheetOverlay(
     onDismissed: () -> Unit,
     modifier: Modifier = Modifier,
     animateIn: Boolean = true,
-    scrim: Color = Color(0xA306070A),
+    scrim: Color = Color(0xB0040506),
     content: @Composable ColumnScope.(close: () -> Unit) -> Unit,
 ) {
     val progress = remember { Animatable(if (animateIn) 0f else 1f) }
@@ -213,13 +207,13 @@ fun SheetOverlay(
         if (!closing) {
             closing = true
             scope.launch {
-                progress.animateTo(0f, tween(220, easing = FastOutLinearInEasing))
+                progress.animateTo(0f, tween(200, easing = FastOutLinearInEasing))
                 onDismissed()
             }
         }
     }
     LaunchedEffect(Unit) {
-        progress.animateTo(1f, spring(dampingRatio = 0.8f, stiffness = 340f))
+        progress.animateTo(1f, spring(dampingRatio = 0.85f, stiffness = 380f))
     }
     BackHandler(onBack = close)
 
@@ -231,7 +225,7 @@ fun SheetOverlay(
                 .background(scrim)
                 .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = close),
         )
-        val sheetShape = RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp)
+        val sheetShape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
         Column(
             Modifier
                 .align(Alignment.BottomCenter)
@@ -239,14 +233,14 @@ fun SheetOverlay(
                 .graphicsLayer {
                     val p = progress.value
                     translationY = (1f - p) * size.height
-                    rotationX = (1f - p) * 18f
+                    rotationX = (1f - p) * 14f
                     transformOrigin = TransformOrigin(0.5f, 1f)
                     cameraDistance = 14f * density
                 }
-                .shadow(30.dp, sheetShape, ambientColor = Color.Black, spotColor = Color.Black)
+                .shadow(24.dp, sheetShape, ambientColor = Color.Black, spotColor = Color.Black)
                 .clip(sheetShape)
                 .background(Brush.verticalGradient(listOf(Palette.SheetTop, Palette.SheetBottom)))
-                .border(1.dp, Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.10f), Color.Transparent)), sheetShape)
+                .border(1.dp, Sheen, sheetShape)
                 .pointerInput(Unit) { detectTapGestures { } }
                 .navigationBarsPadding()
                 .imePadding()
@@ -255,20 +249,19 @@ fun SheetOverlay(
             Box(
                 Modifier
                     .align(Alignment.CenterHorizontally)
-                    .size(width = 38.dp, height = 4.dp)
+                    .size(width = 36.dp, height = 4.dp)
                     .clip(RoundedCornerShape(2.dp))
-                    .background(Color(0xFF3A3D47)),
+                    .background(Palette.BorderHi),
             )
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(14.dp))
             content(close)
         }
     }
 }
 
-/** One expense in a list: 3D icon tile, what it was, and the amount. */
+/** One expense in a list. */
 @Composable
 fun ExpenseRow(expense: Expense, category: Category, timeLabel: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    val color = category.uiColor()
     val title = expense.note.ifBlank { category.name }
     val sub = buildString {
         if (expense.note.isNotBlank()) append(category.shortName).append(" · ")
@@ -278,19 +271,10 @@ fun ExpenseRow(expense: Expense, category: Category, timeLabel: String, onClick:
         modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 10.dp),
+            .padding(horizontal = 14.dp, vertical = 11.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(
-            Modifier
-                .size(46.dp)
-                .clip(RoundedCornerShape(15.dp))
-                .background(Brush.verticalGradient(listOf(color.copy(alpha = 0.22f), color.copy(alpha = 0.07f))))
-                .border(1.dp, color.copy(alpha = 0.35f), RoundedCornerShape(15.dp)),
-            contentAlignment = Alignment.Center,
-        ) {
-            ArtIcon(CategoryArt.of(category.id), 32.dp)
-        }
+        CategoryIcon(category.id, category.uiColor(), size = 42.dp)
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Text(title, style = Type.Title, color = Palette.Text, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -298,25 +282,86 @@ fun ExpenseRow(expense: Expense, category: Category, timeLabel: String, onClick:
             Text(sub, style = Type.Small, color = Palette.TextDim, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         Spacer(Modifier.width(10.dp))
-        Text(Money.format(expense.amount), style = Type.Title, color = Palette.Text)
+        Text(Money.format(expense.amount), style = Type.Num, color = Palette.Text)
     }
 }
 
-/** A dark rounded card with a soft top sheen. */
+/** A raised card: layered surface, soft shadow and a faint top edge. */
 @Composable
-fun Card3D(modifier: Modifier = Modifier, padding: Dp = 18.dp, content: @Composable ColumnScope.() -> Unit) {
-    val shape = RoundedCornerShape(26.dp)
+fun Panel(modifier: Modifier = Modifier, padding: Dp = 18.dp, content: @Composable ColumnScope.() -> Unit) {
+    val shape = RoundedCornerShape(22.dp)
     Column(
         modifier
             .fillMaxWidth()
-            .shadow(12.dp, shape, ambientColor = Color.Black, spotColor = Color.Black)
+            .shadow(10.dp, shape, ambientColor = Color.Black, spotColor = Color.Black)
             .clip(shape)
-            .background(Brush.verticalGradient(listOf(Color(0xFF1C1E25), Color(0xFF131419))))
-            .border(1.dp, Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.09f), Color.White.copy(alpha = 0.02f))), shape)
+            .background(Brush.verticalGradient(listOf(Color(0xFF17181D), Color(0xFF121317))))
+            .border(1.dp, Sheen, shape)
             .padding(padding),
         content = content,
     )
 }
 
 @Composable
-fun rememberHaptics() = LocalView.current
+fun SectionTitle(text: String, modifier: Modifier = Modifier, action: String? = null, onAction: (() -> Unit)? = null) {
+    Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(text, style = Type.H2, color = Palette.Text, modifier = Modifier.weight(1f))
+        if (action != null && onAction != null) {
+            Text(
+                action,
+                style = Type.Label,
+                color = Palette.Accent,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(10.dp))
+                    .clickable(onClick = onAction)
+                    .padding(horizontal = 8.dp, vertical = 10.dp),
+            )
+        }
+    }
+}
+
+/** "↓ 12%" in green when spending went down, "↑ 18%" in amber when it went up. */
+@Composable
+fun ChangeChip(now: Long, before: Long, modifier: Modifier = Modifier) {
+    if (before <= 0 && now <= 0) return
+    val pct = if (before > 0) (now - before) * 100 / before else 0L
+    val same = before > 0 && pct == 0L
+    val up = now > before
+    val color = if (same) Palette.TextDim else if (up) Palette.Warn else Palette.Good
+    val text = when {
+        before <= 0 -> "New"
+        same -> "Same"
+        else -> "${kotlin.math.abs(pct).coerceAtMost(999)}%"
+    }
+    Row(
+        modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(color.copy(alpha = 0.13f))
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (!same) {
+            LineIcon(if (up) Glyph.TrendUp else Glyph.TrendDown, color, size = 14.dp, strokeWidth = 2.2f)
+            Spacer(Modifier.width(4.dp))
+        }
+        Text(text, style = Type.Tiny, color = color)
+    }
+}
+
+/** A labelled number on a small raised tile. */
+@Composable
+fun StatTile(label: String, value: String, modifier: Modifier = Modifier, valueColor: Color = Palette.Text) {
+    val shape = RoundedCornerShape(18.dp)
+    Column(
+        modifier
+            .shadow(6.dp, shape, ambientColor = Color.Black, spotColor = Color.Black)
+            .clip(shape)
+            .background(Brush.verticalGradient(listOf(Color(0xFF17181D), Color(0xFF121317))))
+            .border(1.dp, Sheen, shape)
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+    ) {
+        Text(label, style = Type.Small, color = Palette.TextDim, maxLines = 1)
+        Spacer(Modifier.height(4.dp))
+        Text(value, style = Type.Num.copy(fontSize = Type.Num.fontSize * 1.08f), color = valueColor, maxLines = 1)
+    }
+}

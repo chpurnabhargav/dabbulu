@@ -1,13 +1,15 @@
 package app.dabbulu.domain
 
 import java.time.LocalDate
+import java.time.temporal.ChronoUnit
 
-/** Today's numbers. [budget] is null when no monthly budget is set. */
+/** Today's numbers. [budget] is null when no monthly budget is set. [cycle] is the current budget month. */
 data class TodayStats(
     val date: LocalDate,
     val spentToday: Long,
     val spentThisMonth: Long,
     val budget: DayBudget?,
+    val cycle: Period = Period.of(PeriodKind.Month, date),
 )
 
 data class DayBudget(
@@ -16,14 +18,20 @@ data class DayBudget(
     val todayAllowance: Long,
     val leftToday: Long,
     val monthLeft: Long,
-    /** Days left in the month, including today. */
+    /** Days left in the budget month, including today. */
     val daysLeft: Int,
 )
 
 object Allowance {
 
-    fun compute(monthlyBudget: Long, spentBeforeToday: Long, spentToday: Long, today: LocalDate): DayBudget {
-        val daysLeft = today.lengthOfMonth() - today.dayOfMonth + 1
+    fun compute(
+        monthlyBudget: Long,
+        spentBeforeToday: Long,
+        spentToday: Long,
+        today: LocalDate,
+        cycleEnd: LocalDate = today.withDayOfMonth(1).plusMonths(1),
+    ): DayBudget {
+        val daysLeft = ChronoUnit.DAYS.between(today, cycleEnd).toInt().coerceAtLeast(1)
         val remainingAtStart = monthlyBudget - spentBeforeToday
         // Rounded down to whole rupees so the number reads cleanly.
         val allowance = if (remainingAtStart > 0) (remainingAtStart / daysLeft) / 100 * 100 else 0L
@@ -36,12 +44,19 @@ object Allowance {
         )
     }
 
-    fun stats(date: LocalDate, monthlyBudget: Long, spentBeforeToday: Long, spentToday: Long): TodayStats =
+    fun stats(
+        date: LocalDate,
+        monthlyBudget: Long,
+        spentBeforeToday: Long,
+        spentToday: Long,
+        cycle: Period = Period.of(PeriodKind.Month, date),
+    ): TodayStats =
         TodayStats(
             date = date,
             spentToday = spentToday,
             spentThisMonth = spentBeforeToday + spentToday,
-            budget = if (monthlyBudget > 0) compute(monthlyBudget, spentBeforeToday, spentToday, date) else null,
+            budget = if (monthlyBudget > 0) compute(monthlyBudget, spentBeforeToday, spentToday, date, cycle.end) else null,
+            cycle = cycle,
         )
 }
 

@@ -21,6 +21,8 @@ data class Category(
     /** Default need/want for expenses in this category. */
     val isWant: Boolean,
     val sortOrder: Int,
+    /** Optional monthly limit for this category, in paise. */
+    val budget: Long? = null,
 )
 
 object DefaultCategories {

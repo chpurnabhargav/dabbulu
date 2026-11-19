@@ -1,13 +1,17 @@
 package app.dabbulu.data
 
 import android.content.Context
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import app.dabbulu.domain.Allowance
 import app.dabbulu.domain.Category
 import app.dabbulu.domain.Dates
 import app.dabbulu.domain.Expense
+import app.dabbulu.domain.Period
+import app.dabbulu.domain.PeriodKind
 import app.dabbulu.domain.TodayStats
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
@@ -24,28 +28,48 @@ import java.time.ZonedDateTime
 
 private val Context.settingsStore by preferencesDataStore(name = "settings")
 
+data class AppSettings(
+    /** 0 = no budget set. */
+    val monthlyBudget: Long = 0,
+    /** Day of the month the budget month starts on (1–28). */
+    val monthStartDay: Int = 1,
+    /** 0 = not set. */
+    val monthlyIncome: Long = 0,
+    val dailyReminder: Boolean = false,
+)
+
 class SettingsRepository(private val context: Context) {
     private val budgetKey = longPreferencesKey("monthly_budget_paise")
+    private val startDayKey = intPreferencesKey("month_start_day")
+    private val incomeKey = longPreferencesKey("monthly_income_paise")
+    private val reminderKey = booleanPreferencesKey("daily_reminder")
 
-    /** 0 = no budget set. */
-    val monthlyBudget: Flow<Long> = context.settingsStore.data.map { it[budgetKey] ?: 0L }.distinctUntilChanged()
+    val settings: Flow<AppSettings> = context.settingsStore.data.map {
+        AppSettings(
+            monthlyBudget = it[budgetKey] ?: 0L,
+            monthStartDay = (it[startDayKey] ?: 1).coerceIn(1, 28),
+            monthlyIncome = it[incomeKey] ?: 0L,
+            dailyReminder = it[reminderKey] ?: false,
+        )
+    }.distinctUntilChanged()
 
-    suspend fun setMonthlyBudget(paise: Long) {
-        context.settingsStore.edit { it[budgetKey] = paise.coerceAtLeast(0) }
-    }
+    suspend fun setMonthlyBudget(paise: Long) = context.settingsStore.edit { it[budgetKey] = paise.coerceAtLeast(0) }
+    suspend fun setMonthStartDay(day: Int) = context.settingsStore.edit { it[startDayKey] = day.coerceIn(1, 28) }
+    suspend fun setMonthlyIncome(paise: Long) = context.settingsStore.edit { it[incomeKey] = paise.coerceAtLeast(0) }
+    suspend fun setDailyReminder(on: Boolean) = context.settingsStore.edit { it[reminderKey] = on }
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ExpenseRepository(
     private val db: AppDatabase,
-    private val settings: SettingsRepository,
+    private val settingsRepo: SettingsRepository,
     private val zone: () -> ZoneId = { ZoneId.systemDefault() },
 ) {
     val categories: Flow<List<Category>> = db.categories().observeAll().map { list -> list.map { it.toDomain() } }
 
     val expenses: Flow<List<Expense>> = db.expenses().observeAll().map { list -> list.map { it.toDomain() } }
 
-    val monthlyBudget: Flow<Long> get() = settings.monthlyBudget
+    val settings: Flow<AppSettings> get() = settingsRepo.settings
 
     /** Emits the current date, and again right after each midnight. */
     val today: Flow<LocalDate> = flow {
@@ -63,17 +87,20 @@ class ExpenseRepository(
             .map { rows -> rows.associate { it.categoryId to it.uses } }
     }
 
-    val todayStats: Flow<TodayStats> = today.flatMapLatest { date ->
-        val z = zone()
-        val monthStart = Dates.startOfDayMillis(date.withDayOfMonth(1), z)
-        val dayStart = Dates.startOfDayMillis(date, z)
-        val dayEnd = Dates.startOfDayMillis(date.plusDays(1), z)
-        combine(
-            settings.monthlyBudget,
-            db.expenses().observeSum(monthStart, dayStart),
-            db.expenses().observeSum(dayStart, dayEnd),
-        ) { budget, before, spentToday -> Allowance.stats(date, budget, before, spentToday) }
-    }
+    /** Today's spending against the budget month (which starts on the chosen day and resets automatically). */
+    val todayStats: Flow<TodayStats> = combine(today, settings.map { it.monthStartDay }.distinctUntilChanged()) { d, sd -> d to sd }
+        .flatMapLatest { (date, startDay) ->
+            val z = zone()
+            val cycle = Period.of(PeriodKind.Month, date, startDay)
+            val cycleStart = Dates.startOfDayMillis(cycle.start, z)
+            val dayStart = Dates.startOfDayMillis(date, z)
+            val dayEnd = Dates.startOfDayMillis(date.plusDays(1), z)
+            combine(
+                settings.map { it.monthlyBudget }.distinctUntilChanged(),
+                db.expenses().observeSum(cycleStart, dayStart),
+                db.expenses().observeSum(dayStart, dayEnd),
+            ) { budget, before, spentToday -> Allowance.stats(date, budget, before, spentToday, cycle) }
+        }
 
     suspend fun add(e: Expense): Long = db.expenses().insert(ExpenseEntity.from(e.copy(id = 0), System.currentTimeMillis()))
 
@@ -91,5 +118,9 @@ class ExpenseRepository(
 
     suspend fun restore(e: Expense): Long = db.expenses().insert(ExpenseEntity.from(e, System.currentTimeMillis()))
 
-    suspend fun setMonthlyBudget(paise: Long) = settings.setMonthlyBudget(paise)
+    suspend fun setMonthlyBudget(paise: Long) = settingsRepo.setMonthlyBudget(paise)
+    suspend fun setMonthStartDay(day: Int) = settingsRepo.setMonthStartDay(day)
+    suspend fun setMonthlyIncome(paise: Long) = settingsRepo.setMonthlyIncome(paise)
+    suspend fun setDailyReminder(on: Boolean) = settingsRepo.setDailyReminder(on)
+    suspend fun setCategoryBudget(id: String, paise: Long?) = db.categories().setBudget(id, paise?.takeIf { it > 0 })
 }

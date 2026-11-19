@@ -29,7 +29,7 @@ data class CategoryEntity(
     val monthlyBudget: Long? = null,
     val archived: Boolean = false,
 ) {
-    fun toDomain() = Category(id, name, shortName, color, isWant, sortOrder)
+    fun toDomain() = Category(id, name, shortName, color, isWant, sortOrder, monthlyBudget)
 }
 
 @Entity(tableName = "expenses", indices = [Index("timestamp"), Index("categoryId")])
@@ -65,6 +65,9 @@ data class CategoryUse(val categoryId: String, val uses: Int)
 interface CategoryDao {
     @Query("SELECT * FROM categories WHERE archived = 0 ORDER BY sortOrder")
     fun observeAll(): Flow<List<CategoryEntity>>
+
+    @Query("UPDATE categories SET monthlyBudget = :amount WHERE id = :id")
+    suspend fun setBudget(id: String, amount: Long?)
 }
 
 @Dao
